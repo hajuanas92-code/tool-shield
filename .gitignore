@@ -1,0 +1,22 @@
+# Secrets and environment variables
+.env
+
+# Python compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments (if you create one later)
+venv/
+.venv/
+
+# Pytest cache
+.pytest_cache/
+
+# Runtime databases and logs
+data/*.db
+data/outbox.json
+
+# Optional: Uncomment if you want users to generate ML data/models locally
+# data/*.jsonl
+# models/

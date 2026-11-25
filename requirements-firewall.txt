@@ -1,0 +1,10 @@
+# only what the firewall container needs
+fastapi
+uvicorn
+pydantic
+pyyaml
+sqlglot
+scikit-learn
+joblib
+opentelemetry-sdk
+opentelemetry-exporter-otlp-proto-http

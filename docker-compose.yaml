@@ -1,0 +1,32 @@
+services:
+  firewall:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      ADMIN_KEY: ${ADMIN_KEY:?set ADMIN_KEY in a .env file (see .env.example)}
+      AUDIT_DB: /app/state/audit.db
+      DATA_DIR: /app/data                                   # proxy mode: the firewall owns the shop DB
+      SANDBOX_DIR: /app/sandbox
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318       # sends traces to Jaeger
+      FORCE_COLOR: "1"                                      # coloured logs in `docker compose logs`
+    volumes:
+      - ./policies:/app/policies:ro      # edit the policy on your machine, then: docker compose restart firewall
+      - ./data:/app/data                 # shop.db, emails.json, outbox.json (created by make_fake_data.py)
+      - audit:/app/state                 # keeps the audit log between restarts
+    depends_on:
+      - jaeger
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    ports:
+      - "16686:16686"   # trace UI: http://localhost:16686
+      - "4318:4318"     # OTLP over HTTP
+
+volumes:
+  audit:

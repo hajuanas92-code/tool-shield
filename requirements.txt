@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+httpx
+pydantic
+pyyaml
+sqlglot
+scikit-learn
+joblib
+pytest
+faker
+groq
+opentelemetry-sdk
+opentelemetry-exporter-otlp-proto-http

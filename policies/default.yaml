@@ -1,0 +1,32 @@
+# Policy for every agent unless overridden under `agents:`.
+# Restart the firewall after editing (the file is loaded once).
+default:
+  allowed_tools: [list_emails, read_email, run_sql, send_email, issue_refund, run_shell]
+  approval_ttl_seconds: 300
+
+  sql:
+    allowed_tables: [customers, orders, refunds]
+    bulk_read_tables: [customers]      # unbounded reads of these need approval
+
+  refund:
+    auto_approve_max: 100              # up to this: allowed automatically
+    hard_limit: 1000                   # above this: always blocked; in between: human approval
+
+  email:
+    allowed_domains: [example.com, example.org, example.net]
+    max_body_chars: 2000               # longer bodies need approval (possible data dump)
+
+  shell:
+    allowed_commands: [ls, cat, echo, pwd, head, tail, grep, wc]
+
+  classifier:
+    enabled: true                     # set to true after training: python ml/train.py
+    approval_threshold: 0.5            # injection risk >= this: needs human approval
+    block_threshold: 0.9               # injection risk >= this: blocked
+
+agents: {}
+# Example override:
+# agents:
+#   support-agent:
+#     refund:
+#       auto_approve_max: 50
