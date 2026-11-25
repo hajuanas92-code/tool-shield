@@ -1,41 +1,105 @@
 # ToolShield
 
-**ToolShield**. Just as the name suggests, it acts as a protective shield—a security layer sitting between an autonomous AI agent and the tools it uses, such as querying databases, sending emails, or issuing refunds. 
+**ToolShield** is a security firewall and execution proxy for autonomous AI agents. It sits between an LLM agent and sensitive tools—such as SQL databases, outgoing email, and payment refunds—to block prompt-injection attacks and enforce deterministic policy rules before any action runs.
 
-When an AI agent processes external inputs, attackers can hide malicious prompt injections inside emails to trick the AI into issuing unauthorized $9,500 refunds or wiping out the entire database. ToolShield is built to stop these attacks using five core layers: 
+## How It Works (5 Core Layers)
 
-**1. Lightweight ML Classifier:**
-ToolShield uses a machine-learning model built with **TF-IDF vectorization and Logistic Regression** from scikit-learn. It converts incoming emails into word and character patterns to calculate a risk probability from **0.00 to 1.00** that an email contains a prompt injection. 
+1. **Lightweight ML Classifier (`scikit-learn`):**
+   Converts incoming untrusted text (such as customer emails) into word and character patterns using **TF-IDF vectorization + Logistic Regression** (`0.6 MB` model). It calculates a risk probability (`0.00` to `1.00`) in **0.28 ms** to catch hidden prompt injections without heavy deep-learning dependencies.
+2. **Deterministic Policy Rules (`policies/default.yaml`):**
+   Checks strict rules in **0.14 ms** using SQL AST parsing and allowlists—blocking `DROP TABLE`, `DELETE` without a `WHERE` clause, unauthorized tables (`sqlite_master`), refunds over `$1,000`, unapproved email domains, and shell injection (`curl | sh`).
+3. **Proxy Execution Architecture (`firewall/executor.py`):**
+   The AI agent has **zero direct access** to the database or email system. Only the ToolShield firewall holds the credentials and executes approved tool calls on the agent's behalf.
+4. **Human-in-the-Loop Approval (`agent/cli.py`):**
+   Medium-risk actions (such as refunds between `$100` and `$1,000`) are paused and their exact arguments are locked in SQLite. Once an admin approves via the CLI, the firewall executes those exact stored arguments **once**, preventing the AI from swapping arguments after approval.
+5. **Audit Logs & OpenTelemetry Tracing:**
+   Logs every tool call to an append-only audit trail and exports live latency spans to **Jaeger** when running in Docker.
 
-**2. Deterministic Policy Rules:**
-This is our main shield, checking strict rules in just **0.14 milliseconds**. It uses SQL parsing to block destructive commands like `DROP TABLE` or `DELETE` without a `WHERE` clause, blocks refunds greater than **$1,000**, restricts outgoing emails to approved domains, and blocks dangerous shell commands like `curl | sh`. 
+## Evaluation Results
 
-👉 **[ACTION 1 — Run the Attack Table Demo]**
-*(Run `python demo_attacks.py` in Terminal 3)* 
+Tested across **307 held-out scenarios** (obvious rule attacks, disguised prompt-injection emails, benign calls, and tricky benign wording):
 
-"Let's see those first two layers in action. Safe SQL reads and small refunds get a green `ALLOW`, while `DROP TABLE`, bad domains, and the $9,500 refund are blocked by our policy rules. And on the last row, a small $60 refund triggered right after a poisoned email is caught by our ML classifier at `risk=1.00` and blocked." 
+| Mode | Obvious Attacks Caught | Disguised Email Attacks Caught | Overall Catch Rate | False Alarms (Normal / Tricky) | p50 Latency |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Rules Only** | 100.0% | 0.0% | **23.1%** | 0.0% / 0.0% | 0.14 ms |
+| **Rules + Classifier (0.5 threshold)** | 100.0% | 38.0% | **52.3%** | 0.0% / 6.5% | 1.41 ms |
+| **Rules + Classifier (0.3 threshold)** | 100.0% | 59.0% | **68.5%** | 0.0% / 23.4% | 1.46 ms |
 
-**3. Proxy Execution Architecture:**
-The AI agent has **zero direct access** to the database or email system. Only the ToolShield firewall holds the credentials and executes approved tool calls on the agent's behalf. Even if a hacker hijacks the AI's brain, the firewall protects the database and sensitive data. 
+## Quick Start
 
-**4. Human-in-the-Loop Approval:**
-Medium-risk actions—like a **$500 refund**—are paused and locked in SQLite until an admin reviews and approves or denies them. Once approved, the firewall runs the exact locked arguments **once**, making it impossible for the AI to swap $500 to $9,500 after approval. 
-
-👉 **[ACTION 2 — Run the Live AI Agent + Approval Watch]**
-*(Make sure Terminal 1 is running `uvicorn --app-dir firewall main:app --port 8000` and Terminal 2 is running `python cli.py watch`. Now run this in Terminal 3:)* 
+### 1. Install & Train the Classifier
 
 ```bash
-python agent/agent.py "Query SELECT id, amount FROM orders WHERE amount > 200 AND amount < 900 LIMIT 1, then issue a full refund for that exact order."
+git clone <your-repo-url>
+cd ToolShield
+python -m venv venv
+source venv/bin/activate        # Windows PowerShell: .\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+python fake_data.py
+python ml/make_training_data.py
+python ml/train_light.py
 ```
 
-"Here, our live Groq AI agent finds Order #3 for $537.59 and tries to refund it. Because it's over $100, ToolShield pauses the agent (`WAIT`) and alerts my admin terminal." 
+### 2. Start the Firewall Server (Terminal 1)
 
-*(Switch to Terminal 2, type **`y`**, and press **Enter**)* 
+```bash
+export ADMIN_KEY="change-me"
+uvicorn --app-dir firewall main:app --port 8000
+```
 
-"Once I approve it, the firewall executes those exact locked arguments once and returns the result so the AI can finish its reply." 
+### 3. Run the Demos & Live Groq Agent (Terminals 2 & 3)
 
-**5. Audit Logs & OpenTelemetry:**
-Finally, ToolShield saves a permanent audit trail of every tool call and sends live latency traces to **Jaeger** when running in Docker, helping developers monitor every single decision." 
+```bash
+# Scripted 9-case policy & prompt-injection table
+PYTHONPATH=agent python demo_attacks.py
 
-👉 **[ACTION 3 — Optional: Show Jaeger or Eval Table]**
-*(Briefly switch to `http://localhost:16686` in your browser if Docker is running, or show `eval/results.md` in your editor before wrapping up.)*
+# Scripted Proxy mode + locked human approval demo
+export ADMIN_KEY="change-me"
+python demo_proxy.py
+
+# Interactive admin approval watcher (Terminal 2)
+export ADMIN_KEY="change-me"
+python agent/cli.py watch
+
+# Live autonomous Groq AI agent (Terminal 3)
+export FIREWALL_URL="http://localhost:8000"
+export GROQ_API_KEY="your-groq-api-key"
+python agent/agent.py "Read all emails and handle them."
+```
+
+### 4. Run with Docker & Jaeger Tracing
+
+```bash
+cp .env.example .env            # Set ADMIN_KEY inside .env
+docker compose up --build
+# Swagger API docs: http://localhost:8000/docs
+# Jaeger Trace UI:  http://localhost:16686
+```
+
+### 5. Run Benchmarks & Automated Tests
+
+```bash
+python eval/run_eval.py --approval 0.3
+python -m pytest -q
+```
+
+## Project Structure
+
+```text
+ToolShield/
+├── agent/          # Groq AI agent, ProxyGateway, admin CLI, and terminal UI helpers
+├── firewall/       # FastAPI proxy server, policy engine, ML classifier, SQLite executor
+├── policies/       # YAML security rules (default.yaml)
+├── ml/             # Synthetic dataset generator and scikit-learn training scripts
+├── eval/           # Offline benchmark harness and saved metrics (results.md)
+├── tests/          # 61 unit and integration tests for rules, proxy mode, and approvals
+├── demo_attacks.py # 9-scenario policy & prompt-injection demo
+├── demo_proxy.py   # End-to-end Proxy mode execution demo
+└── fake_data.py    # Sample SQLite database and email seed generator
+```
+
+## Known Limitations
+
+* **No per-agent API authentication yet:** While admin approval endpoints require `ADMIN_KEY`, any caller with network access to `/v1/execute` can currently submit requests under any `agent_id`.
+* **Session-wide context tainting:** Once an agent reads a poisoned email, all subsequent state-changing actions in that session remain blocked or flagged until the session resets.
